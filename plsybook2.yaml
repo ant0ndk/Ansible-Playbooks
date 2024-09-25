@@ -1,0 +1,39 @@
+---
+- name: Архивация логов
+  hosts: all
+  become: yes
+  vars:
+    log_dirs:
+      - /opt/log/service_log/accounting
+      - /opt/log/service_log/authoriz
+      - /opt/log/service_log/authentic
+    archive_dir: /opt/log/archives
+    date_limit: "2022-06-30"
+
+  tasks:
+    - name: Создать директорию для архивов, если её нет
+      ansible.builtin.file:
+        path: "{{ archive_dir }}"
+        state: directory
+
+    - name: Найти лог-файлы для архивации (старше даты ограничения)
+      ansible.builtin.find:
+        paths: "{{ log_dirs }}"
+        patterns: "*.log"
+        age: "1d" 
+        recurse: yes
+      register: log_files
+
+    - name: Архивировать старые логи
+      ansible.builtin.archive:
+        path: "{{ item.path }}"
+        dest: "{{ archive_dir }}/{{ item.path | basename }}.tar.gz"
+      with_items: "{{ log_files.files }}"
+      when: "item.mtime < ansible_date_time.epoch | int"
+
+    - name: Удалить исходные файлы после архивации
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      with_items: "{{ log_files.files }}"
+      when: "item.mtime < ansible_date_time.epoch | int"

@@ -1,0 +1,66 @@
+---
+- name: Проверка статуса сервиса и запись логов
+  hosts: all
+  become: yes
+  vars:
+    service_name: nginx
+    log_file: /var/log/service_check.log
+    smtp_server: smtp.example.com
+    smtp_port: 587
+    smtp_user: "admin@example.com"
+    smtp_password: "password"
+    email_recipient: "client@example.com"
+  
+  tasks:
+    - name: Проверить статус сервиса
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        state: started
+      register: service_status
+      ignore_errors: yes
+
+    - name: Получить текущее время
+      ansible.builtin.command: date "+%Y-%m-%d %H:%M:%S"
+      register: current_time
+
+    - name: Записать OK, если сервис доступен
+      ansible.builtin.lineinfile:
+        path: "{{ log_file }}"
+        line: "{{ current_time.stdout }}: OK"
+      when: service_status is success
+
+    - name: Записать, что сервис недоступен, если сервис не работает
+      ansible.builtin.lineinfile:
+        path: "{{ log_file }}"
+        line: "{{ current_time.stdout }}: Сервис недоступен"
+      when: service_status is failed
+
+    - name: Попытаться запустить сервис, если он был недоступен
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        state: started
+      when: service_status is failed
+      register: start_attempt
+
+    - name: Записать, что сервис успешно запущен
+      ansible.builtin.lineinfile:
+        path: "{{ log_file }}"
+        line: "{{ current_time.stdout }}: Сервис успешно запущен"
+      when: start_attempt is success
+
+    - name: Записать, что сервис по-прежнему недоступен
+      ansible.builtin.lineinfile:
+        path: "{{ log_file }}"
+        line: "{{ current_time.stdout }}: Сервис по-прежнему недоступен"
+      when: start_attempt is failed
+
+    - name: Отправить email уведомление, если сервис по-прежнему недоступен
+      ansible.builtin.mail:
+        host: "{{ smtp_server }}"
+        port: "{{ smtp_port }}"
+        username: "{{ smtp_user }}"
+        password: "{{ smtp_password }}"
+        to: "{{ email_recipient }}"
+        subject: "Сервис {{ service_name }} не доступен"
+        body: "{{ current_time.stdout }}: {{ service_name }} по-прежнему недоступен"
+      when: start_attempt is failed
